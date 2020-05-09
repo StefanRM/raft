@@ -8,8 +8,8 @@ import messages.RequestVote;
 import simulation.Supervisor;
 
 public class Server implements Runnable {
-	private final int electionTimeoutMin = 2000; // ms
-	private final int electionTimeoutMax = 5000;
+	private final int electionTimeoutMin = 3000; // ms
+	private final int electionTimeoutMax = 5000; // ms
 	public Supervisor supervisor;
 	public Thread supervisorThread;
 	public int id;
@@ -18,7 +18,7 @@ public class Server implements Runnable {
 	public int nrVotes;
 	public boolean voted;
 	public ConcurrentLinkedQueue<Message> msgQ;
-	private final int SLEEP_TIME = 5000;
+	private final int leaderHeartbeatTimeout = 1400; // ms (aprox half of the minimum election timeout)
 	public int pendingAppEnt;
 
 	public Server(int id) {
@@ -82,34 +82,32 @@ public class Server implements Runnable {
 
 				// send the vote requests
 				this.supervisor.msgQ.add(msg);
-				this.supervisorThread.interrupt();
 			} else {
-				while (this.pendingAppEnt != 0) {
-					try {
-						Thread.interrupted(); // clear interrupt status
-						Thread.sleep(this.SLEEP_TIME);
-					} catch (InterruptedException e) {
-						while (!this.msgQ.isEmpty()) {
-							Message msg = msgQ.poll();
-							System.out.println("[Server " + this.id + "] received: " + msg);
-							if (msg instanceof AppendEntry) {
-								leaderAppendEntry((AppendEntry) msg);
-							}
-						}
-
-						System.out.println(
-								"[Server " + this.id + "] " + this.pendingAppEnt + " respond to heartbeats remaining");
-					}
-				}
-
 				Message msg = new AppendEntry(this.term, this.id, true, this.id);
 				this.pendingAppEnt = this.supervisor.activeServers - 1;
 
 				// send the vote requests
 				this.supervisor.msgQ.add(msg);
-				this.supervisorThread.interrupt();
 
-				System.out.println("[Server " + this.id + "] sent heartbeat");
+				System.out.println("[Server " + this.id + "] sent " + this.pendingAppEnt + " heartbeats");
+
+				// wait for the heartbeats to arrive
+				try {
+					Thread.interrupted(); // clear interrupt status
+					Thread.sleep(this.leaderHeartbeatTimeout);
+				} catch (InterruptedException e) {
+					System.out.println("[Server " + this.id + "] Something happened to the leader!");
+				}
+
+				while (!this.msgQ.isEmpty()) {
+					msg = msgQ.poll();
+					System.out.println("[Server " + this.id + "] received: " + msg);
+					if (msg instanceof AppendEntry) {
+						leaderAppendEntry((AppendEntry) msg);
+					}
+				}
+				
+				System.out.println("[Server " + this.id + "] " + this.pendingAppEnt + " heartbeats remaining");
 			}
 		}
 	}
@@ -132,7 +130,6 @@ public class Server implements Runnable {
 			}
 
 			this.supervisor.msgQ.add(respReqVote);
-			this.supervisorThread.interrupt();
 		} else {
 			System.out.println("[Server " + this.id + "] Some lost message: " + reqVote);
 		}
@@ -169,7 +166,6 @@ public class Server implements Runnable {
 			}
 
 			this.supervisor.msgQ.add(respReqVote);
-			this.supervisorThread.interrupt();
 
 			return;
 		}
@@ -186,40 +182,52 @@ public class Server implements Runnable {
 
 		if (appEnt.fromleader) {
 			if (this.term < appEnt.term) {
-				// TODO
+				this.term = appEnt.term;
 			} else if ((this.term == appEnt.term)) {
-				respAppEnt = new AppendEntry(this.term, appEnt.leaderId, false, this.id);
-
-				this.supervisor.msgQ.add(respAppEnt);
-				this.supervisorThread.interrupt();
+				// normal case (everything up-to-date)
 			} else {
-				// TODO
+				return;
 			}
 
-			// ADD here transmission
+			respAppEnt = new AppendEntry(this.term, appEnt.leaderId, false, this.id);
+			this.supervisor.msgQ.add(respAppEnt);
 		} else {
 			System.out.println("[Server " + this.id + "] !!!Some lost message: " + appEnt);
 		}
 	}
 
 	private void candidateAppendEntry(AppendEntry appEnt) {
+		AppendEntry respAppEnt;
 
+		if (appEnt.fromleader) {
+			if (this.term < appEnt.term) {
+				this.term = appEnt.term;
+			} else if ((this.term == appEnt.term)) {
+				// normal case (everything up-to-date)
+			} else {
+				return;
+			}
+
+			this.state = State.FOLLOWER;
+			respAppEnt = new AppendEntry(this.term, appEnt.leaderId, false, this.id);
+			this.supervisor.msgQ.add(respAppEnt);
+		} else {
+			System.out.println("[Server " + this.id + "] !!!Some lost message: " + appEnt);
+		}
 	}
 
 	private void leaderAppendEntry(AppendEntry appEnt) {
-		// AppendEntry respAppEnt;
-
 		if (!appEnt.fromleader) {
 			if (this.term < appEnt.term) {
-				// TODO
+				this.term = appEnt.term;
+				this.state = State.FOLLOWER;
 			} else if ((this.term == appEnt.term)) {
 				this.pendingAppEnt--;
 			} else {
-				// TODO
+				return;
 			}
-
-			// TODO
 		} else {
+			// There can be only one leader in a term
 			System.out.println("[Server " + this.id + "] Some lost message: " + appEnt);
 		}
 	}

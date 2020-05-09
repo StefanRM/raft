@@ -9,7 +9,6 @@ import servers.Server;
 
 public class Supervisor implements Runnable {
 
-	private final int SLEEP_TIME = 5000; // ms
 	private final Thread[] serversThreads;
 	private final Server[] servers;
 	public ConcurrentLinkedQueue<Message> msgQ;
@@ -37,37 +36,33 @@ public class Supervisor implements Runnable {
 //				System.out.println("am primit: " + this.txt);
 //			}
 
-			try {
-				Thread.interrupted(); // clear interrupt status
-				Thread.sleep(SLEEP_TIME);
-			} catch (InterruptedException e) {
-				while (!this.msgQ.isEmpty()) {
-					Message msg = this.msgQ.poll();
-					System.err.println("[Supervisor] received: " + msg);
-					if (msg instanceof RequestVote) {
-						if (!((RequestVote) msg).fromCandidate) {
-							RequestVote reqVote = (RequestVote) msg;
-							servers[reqVote.candidateId].msgQ.add(msg);
-							serversThreads[reqVote.candidateId].interrupt();
-						} else {
-							for (int i = 0; i < serversThreads.length; i++) {
-								if (i != msg.serverId) {
-									servers[i].msgQ.add(msg);
-									serversThreads[i].interrupt();
-								}
+			while (!this.msgQ.isEmpty()) {
+				Message msg = this.msgQ.poll();
+				System.out.println("[Supervisor] received: " + msg);
+				if (msg instanceof RequestVote) {
+					if (!((RequestVote) msg).fromCandidate) {
+						RequestVote reqVote = (RequestVote) msg;
+						servers[reqVote.candidateId].msgQ.add(msg);
+						serversThreads[reqVote.candidateId].interrupt();
+					} else {
+						for (int i = 0; i < serversThreads.length; i++) {
+							if (i != msg.serverId) {
+								servers[i].msgQ.add(msg);
+								serversThreads[i].interrupt();
 							}
 						}
-					} else if (msg instanceof AppendEntry) {
-						if (!((AppendEntry) msg).fromleader) {
-							AppendEntry appEnt = (AppendEntry) msg;
-							servers[appEnt.leaderId].msgQ.add(msg);
-							serversThreads[appEnt.leaderId].interrupt();
-						} else {
-							for (int i = 0; i < serversThreads.length; i++) {
-								if (i != msg.serverId) {
-									servers[i].msgQ.add(msg);
-									serversThreads[i].interrupt();
-								}
+					}
+				} else if (msg instanceof AppendEntry) {
+					if (!((AppendEntry) msg).fromleader) {
+						AppendEntry appEnt = (AppendEntry) msg;
+						servers[appEnt.leaderId].msgQ.add(msg);
+						// leader server does not need to be interrupted as it waits
+						// for heartbeats for a certain amount of time
+					} else {
+						for (int i = 0; i < serversThreads.length; i++) {
+							if (i != msg.serverId) {
+								servers[i].msgQ.add(msg);
+								serversThreads[i].interrupt();
 							}
 						}
 					}
