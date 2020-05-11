@@ -1,11 +1,16 @@
 package simulation;
 
+import java.sql.ClientInfoStatus;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.concurrent.ConcurrentLinkedQueue;
 
 import messages.AppendEntry;
+import messages.ClientRequest;
 import messages.Message;
 import messages.RequestVote;
 import servers.Server;
+import servers.State;
 
 public class Supervisor implements Runnable {
 
@@ -13,12 +18,18 @@ public class Supervisor implements Runnable {
 	private final Server[] servers;
 	public ConcurrentLinkedQueue<Message> msgQ;
 	public int activeServers;
+	private int nrMessages;
+	public int leaderId;
+	public List<Integer> shutdownServers = new ArrayList<Integer>();
 
 	public Supervisor(Thread[] serversThreads, Server[] servers) {
 		this.serversThreads = serversThreads;
 		this.servers = servers;
 		this.activeServers = servers.length;
 		this.msgQ = new ConcurrentLinkedQueue<Message>();
+		this.nrMessages = 0;
+		this.leaderId = -1;
+		this.shutdownServers = new ArrayList<Integer>();
 	}
 
 	public void run() {
@@ -37,6 +48,30 @@ public class Supervisor implements Runnable {
 //			}
 
 			while (!this.msgQ.isEmpty()) {
+				nrMessages++;
+				
+				// test logic
+//				if (nrMessages % 5 == 0) {
+//					ClientRequest clReq = new ClientRequest(nrMessages);
+//					System.out.println(
+//							"[Supervisor] received from client: " + clReq + " --> sending to server " + this.leaderId);
+//					this.servers[this.leaderId].clientReqQ.add(clReq);
+//				}
+//				
+//				if (nrMessages == 10) {
+//					this.servers[this.leaderId].stopServer();
+//					this.shutdownServers.add(this.leaderId);
+//					this.activeServers--;
+//				}
+//				if (nrMessages == 20) {
+//					int serverId = this.shutdownServers.remove(0);
+//					this.servers[serverId].restartServer();
+//					this.activeServers++;
+//					this.serversThreads[serverId].interrupt();
+//				}
+				
+				System.out.println("[Supervisor] Message no. " + this.nrMessages);
+
 				Message msg = this.msgQ.poll();
 				System.out.println("[Supervisor] received: " + msg);
 				if (msg instanceof RequestVote) {

@@ -1,5 +1,5 @@
 package servers;
 
 public enum State {
-    FOLLOWER, CANDIDATE, LEADER 
+	FOLLOWER, CANDIDATE, LEADER, SHUTDOWN
 }

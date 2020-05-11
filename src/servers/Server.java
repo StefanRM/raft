@@ -1,8 +1,12 @@
 package servers;
 
+import java.util.ArrayList;
+import java.util.List;
 import java.util.concurrent.ConcurrentLinkedQueue;
 
+import Main.Main;
 import messages.AppendEntry;
+import messages.ClientRequest;
 import messages.Message;
 import messages.RequestVote;
 import simulation.Supervisor;
@@ -20,6 +24,12 @@ public class Server implements Runnable {
 	public ConcurrentLinkedQueue<Message> msgQ;
 	private final int leaderHeartbeatTimeout = 1400; // ms (aprox half of the minimum election timeout)
 	public int pendingAppEnt;
+	public List<Log> log;
+	public int commitIndex;
+	public int lastApplied;
+	public ConcurrentLinkedQueue<ClientRequest> clientReqQ;
+	public int[] nextIndex;
+	private final int shutdownTime = 100000; // ms (long enough to stay in shutdown)
 
 	public Server(int id) {
 		this.id = id;
@@ -29,6 +39,14 @@ public class Server implements Runnable {
 		this.voted = false;
 		this.msgQ = new ConcurrentLinkedQueue<Message>();
 		this.pendingAppEnt = 0;
+		this.log = new ArrayList<Log>();
+		this.clientReqQ = new ConcurrentLinkedQueue<ClientRequest>();
+		this.nextIndex = new int[Main.nrServers];
+		this.lastApplied = 0;
+		this.commitIndex = 0;
+		for (int i = 0; i < nextIndex.length; i++) {
+			nextIndex[i] = 0;
+		}
 	}
 
 	private void resetStats() {
@@ -41,10 +59,38 @@ public class Server implements Runnable {
 		return (int) ((Math.random() * (this.electionTimeoutMax - this.electionTimeoutMin)) + this.electionTimeoutMin);
 	}
 
+	public void stopServer() {
+		System.out.println("[Server " + this.id + "] shutdown");
+		this.state = State.SHUTDOWN;
+	}
+
+	public void restartServer() {
+		System.out.println("[Server " + this.id + "] restarted");
+		while (!this.msgQ.isEmpty()) {
+			this.msgQ.poll();
+		}
+		while (!this.clientReqQ.isEmpty()) {
+			this.clientReqQ.poll();
+		}
+		
+		this.state = State.FOLLOWER;
+	}
+	
 	@Override
 	public void run() {
 		System.out.println("[Server " + this.id + "] started");
 		while (true) {
+			if (this.state == State.SHUTDOWN) {
+				try {
+					Thread.interrupted(); // clear interrupt status
+					Thread.sleep(this.shutdownTime );
+				} catch (InterruptedException e) {
+					
+				}
+				continue;
+			}
+
+			System.out.println("[Server " + this.id + "] Log: " + this.log);
 			if (this.state != State.LEADER) {
 				int electionTimeout = getElectionTimeout();
 				System.out.println("[Server " + this.id + "] Election Timeout: " + electionTimeout);
@@ -61,7 +107,7 @@ public class Server implements Runnable {
 							} else if (msg instanceof AppendEntry) {
 								followerAppendEntry((AppendEntry) msg);
 							}
-						} else {
+						} else { // candidate
 							if (msg instanceof RequestVote) {
 								candidateRequestVote((RequestVote) msg);
 							} else if (msg instanceof AppendEntry) {
@@ -83,8 +129,25 @@ public class Server implements Runnable {
 				// send the vote requests
 				this.supervisor.msgQ.add(msg);
 			} else {
-				Message msg = new AppendEntry(this.term, this.id, true, this.id);
-				this.pendingAppEnt = this.supervisor.activeServers - 1;
+				ClientRequest clReq = null;
+				if (!this.clientReqQ.isEmpty()) {
+					clReq = this.clientReqQ.poll();
+					System.out.println("[Server " + this.id + "] received " + clReq + " from client");
+				}
+
+				Message msg;
+				if (clReq == null) {
+					msg = new AppendEntry(this.term, this.id, true, this.id);
+				} else { // TODO
+					Log newLog = new Log(this.term, this.commitIndex + 1, clReq.log);
+					this.log.add(newLog);
+					List<Log> entries = new ArrayList<Log>();
+					entries.add(newLog);
+					int prevLogIndex = log.size() - 1;
+					int prevLogTerm = log.size() == 0 ? -1 : log.get(log.size() - 1).term;
+					msg = new AppendEntry(this.term, this.id, true, this.id, true, prevLogIndex, prevLogTerm, entries, this.commitIndex + 1, false);
+				}
+				this.pendingAppEnt = Main.nrServers - 1;
 
 				// send the vote requests
 				this.supervisor.msgQ.add(msg);
@@ -172,8 +235,12 @@ public class Server implements Runnable {
 
 		if (this.nrVotes >= (supervisor.activeServers / 2 + 1)) {
 			this.state = State.LEADER;
+			this.supervisor.leaderId = this.id;
 			System.out.println("[Server " + this.id + "] I am the LEADER");
 			resetStats();
+			for (int i = 0; i < nextIndex.length; i++) {
+				nextIndex[i] = this.lastApplied + 1;
+			}
 		}
 	}
 
@@ -181,15 +248,25 @@ public class Server implements Runnable {
 		AppendEntry respAppEnt;
 
 		if (appEnt.fromleader) {
-			if (this.term < appEnt.term) {
-				this.term = appEnt.term;
-			} else if ((this.term == appEnt.term)) {
-				// normal case (everything up-to-date)
-			} else {
-				return;
+			if (!appEnt.logReplication) {
+				if (this.term < appEnt.term) {
+					this.term = appEnt.term;
+				} else if ((this.term == appEnt.term)) {
+					// normal case (everything up-to-date)
+				} else {
+					return;
+				}
+	
+				respAppEnt = new AppendEntry(this.term, appEnt.leaderId, false, this.id);
+			} else { // TODO
+				boolean needLog = false;
+				List<Log> entries = null;
+				
+				log.addAll(appEnt.entries);
+
+				respAppEnt = new AppendEntry(this.term, appEnt.leaderId, false, this.id, true, appEnt.prevLogIndex, appEnt.prevLogTerm, entries, this.commitIndex + 1, needLog);
 			}
 
-			respAppEnt = new AppendEntry(this.term, appEnt.leaderId, false, this.id);
 			this.supervisor.msgQ.add(respAppEnt);
 		} else {
 			System.out.println("[Server " + this.id + "] !!!Some lost message: " + appEnt);
