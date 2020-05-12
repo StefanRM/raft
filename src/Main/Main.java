@@ -4,6 +4,7 @@ import simulation.Supervisor;
 
 public class Main {
 	public static int nrServers = 3;
+	public static boolean debug = false;
 	
 	public static void main(String[] args) {
 		Thread[] slaves = new Thread[nrServers];

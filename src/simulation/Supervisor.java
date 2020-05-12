@@ -1,16 +1,15 @@
 package simulation;
 
-import java.sql.ClientInfoStatus;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.ConcurrentLinkedQueue;
 
+import Main.Main;
 import messages.AppendEntry;
 import messages.ClientRequest;
 import messages.Message;
 import messages.RequestVote;
 import servers.Server;
-import servers.State;
 
 public class Supervisor implements Runnable {
 
@@ -18,7 +17,8 @@ public class Supervisor implements Runnable {
 	private final Server[] servers;
 	public ConcurrentLinkedQueue<Message> msgQ;
 	public int activeServers;
-	private int nrMessages;
+	private int nrHeartbeats;
+	private boolean newHearbeat;
 	public int leaderId;
 	public List<Integer> shutdownServers = new ArrayList<Integer>();
 
@@ -27,53 +27,50 @@ public class Supervisor implements Runnable {
 		this.servers = servers;
 		this.activeServers = servers.length;
 		this.msgQ = new ConcurrentLinkedQueue<Message>();
-		this.nrMessages = 0;
+		this.nrHeartbeats = 0;
 		this.leaderId = -1;
 		this.shutdownServers = new ArrayList<Integer>();
+		this.newHearbeat = false;
 	}
 
 	public void run() {
 		System.out.println("[Supervisor] started");
 		while (true) {
-//			System.out.println("[Supervisor] Message sent to servers.");
-//			for (int i = 0; i < serversThreads.length; i++) {
-//				serversThreads[i].interrupt(); // wake up
-//			}
-//			try {
-//				Thread.interrupted(); // clear interrupt status
-//				Thread.sleep(SLEEP_TIME);
-//			} catch (InterruptedException e) {
-//				System.err.println("[Supervisor] abnormal wake up.");
-//				System.out.println("am primit: " + this.txt);
-//			}
 
 			while (!this.msgQ.isEmpty()) {
-				nrMessages++;
 				
 				// test logic
-//				if (nrMessages % 5 == 0) {
-//					ClientRequest clReq = new ClientRequest(nrMessages);
-//					System.out.println(
-//							"[Supervisor] received from client: " + clReq + " --> sending to server " + this.leaderId);
-//					this.servers[this.leaderId].clientReqQ.add(clReq);
-//				}
-//				
-//				if (nrMessages == 10) {
-//					this.servers[this.leaderId].stopServer();
-//					this.shutdownServers.add(this.leaderId);
-//					this.activeServers--;
-//				}
-//				if (nrMessages == 20) {
-//					int serverId = this.shutdownServers.remove(0);
-//					this.servers[serverId].restartServer();
-//					this.activeServers++;
-//					this.serversThreads[serverId].interrupt();
-//				}
+				if (nrHeartbeats > 0 && nrHeartbeats % 7 == 0 && newHearbeat) {
+					ClientRequest clReq = new ClientRequest(nrHeartbeats);
+					System.out.println(
+							"[Supervisor] received from client: " + clReq + " --> sending to server " + this.leaderId);
+					this.servers[this.leaderId].clientReqQ.add(clReq);
+					
+					this.newHearbeat = false;
+				}
 				
-				System.out.println("[Supervisor] Message no. " + this.nrMessages);
+				if (nrHeartbeats == 11 && newHearbeat) {
+					this.servers[this.leaderId].stopServer();
+					this.shutdownServers.add(this.leaderId);
+					this.activeServers--;
+					
+					this.newHearbeat = false;
+				}
+				if (nrHeartbeats == 30 && newHearbeat) {
+					int serverId = this.shutdownServers.remove(0);
+					this.servers[serverId].restartServer();
+					this.activeServers++;
+					this.serversThreads[serverId].interrupt();
+					
+					this.newHearbeat = false;
+				}
 
 				Message msg = this.msgQ.poll();
-				System.out.println("[Supervisor] received: " + msg);
+				
+				if (Main.debug) {
+					System.out.println("[Supervisor] received: " + msg);
+				}
+				
 				if (msg instanceof RequestVote) {
 					if (!((RequestVote) msg).fromCandidate) {
 						RequestVote reqVote = (RequestVote) msg;
@@ -88,17 +85,27 @@ public class Supervisor implements Runnable {
 						}
 					}
 				} else if (msg instanceof AppendEntry) {
-					if (!((AppendEntry) msg).fromleader) {
-						AppendEntry appEnt = (AppendEntry) msg;
-						servers[appEnt.leaderId].msgQ.add(msg);
+					AppendEntry appEnt = (AppendEntry) msg;
+					if (!appEnt.fromleader) {
+						
+						servers[appEnt.leaderId].msgQ.add(appEnt);
 						// leader server does not need to be interrupted as it waits
 						// for heartbeats for a certain amount of time
 					} else {
-						for (int i = 0; i < serversThreads.length; i++) {
-							if (i != msg.serverId) {
-								servers[i].msgQ.add(msg);
-								serversThreads[i].interrupt();
+						nrHeartbeats++; // heartbeats
+						this.newHearbeat = true;
+						System.out.println("[Supervisor] Nr. of Heartbeats so far: " + this.nrHeartbeats);
+
+						if (appEnt.destServerId == -1) {
+							for (int i = 0; i < serversThreads.length; i++) {
+								if (i != appEnt.serverId) {
+									servers[i].msgQ.add(appEnt);
+									serversThreads[i].interrupt();
+								}
 							}
+						} else {
+							servers[appEnt.destServerId].msgQ.add(appEnt);
+							serversThreads[appEnt.destServerId].interrupt();
 						}
 					}
 				}

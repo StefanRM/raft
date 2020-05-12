@@ -13,17 +13,22 @@ public class AppendEntry extends Message {
 	public int prevLogTerm;
 	public List<Log> entries;
 	public int leaderCommit;
+	public int destServerId;
 
-	public AppendEntry(int term, int leaderId, boolean fromleader, int serverId) {
+	public AppendEntry(int term, int leaderId, boolean fromleader, int serverId, int destServerId, int prevLogIndex,
+			int prevLogTerm) {
 		this.term = term;
 		this.leaderId = leaderId;
 		this.fromleader = fromleader;
 		this.serverId = serverId;
 		this.logReplication = false;
+		this.destServerId = destServerId;
+		this.prevLogIndex = prevLogIndex;
+		this.prevLogTerm = prevLogTerm;
 	}
 
-	public AppendEntry(int term, int leaderId, boolean fromleader, int serverId, boolean logReplication, int prevLogIndex, int prevLogTerm,
-			List<Log> entries, int leaderCommit, boolean needLog) {
+	public AppendEntry(int term, int leaderId, boolean fromleader, int serverId, boolean logReplication,
+			int prevLogIndex, int prevLogTerm, List<Log> entries, int leaderCommit, boolean needLog, int destServerId) {
 		this.term = term;
 		this.leaderId = leaderId;
 		this.fromleader = fromleader;
@@ -34,17 +39,20 @@ public class AppendEntry extends Message {
 		this.entries = entries;
 		this.leaderCommit = leaderCommit;
 		this.needLog = needLog;
+		this.destServerId = destServerId;
 	}
 
 	@Override
 	public String toString() {
 		if (!logReplication) {
 			return "AppendEntry: [term: " + this.term + ", leaderId: " + this.leaderId + ", fromleader: "
-					+ this.fromleader + ", serverId: " + this.serverId + "]";
+					+ this.fromleader + ", serverId: " + this.serverId + ", destServerId: " + this.destServerId
+					+ ", prevLogIndex: " + this.prevLogIndex + ", prevLogTerm: " + this.prevLogTerm + "]";
 		}
 
 		return "AppendEntry: [term: " + this.term + ", leaderId: " + this.leaderId + ", fromleader: " + this.fromleader
-				+ ", serverId: " + this.serverId + ", prevLogIndex: " + this.prevLogIndex + ", prevLogTerm: "
-				+ this.prevLogTerm + ", entries: " + this.entries + ", leaderCommit: " + this.leaderCommit + "]";
+				+ ", serverId: " + this.serverId + ", destServerId: " + this.destServerId + ", prevLogIndex: "
+				+ this.prevLogIndex + ", prevLogTerm: " + this.prevLogTerm + ", entries: " + this.entries
+				+ ", leaderCommit: " + this.leaderCommit + ", needLog: " + this.needLog + "]";
 	}
 }
