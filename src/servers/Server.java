@@ -12,25 +12,25 @@ import messages.RequestVote;
 import simulation.Supervisor;
 
 public class Server implements Runnable {
-	private final int electionTimeoutMin = 3000; // ms
-	private final int electionTimeoutMax = 5000; // ms
-	public Supervisor supervisor;
-	public Thread supervisorThread;
+	private final int electionTimeoutMin = 3000; // minimum value for election time (ms)
+	private final int electionTimeoutMax = 5000; // maximum value for election time (ms)
+	public Supervisor supervisor; // supervisor instance
+	public Thread supervisorThread; // supervisor thread
 	public int id;
 	public State state;
 	public int term;
-	public int nrVotes;
-	public boolean voted;
-	public ConcurrentLinkedQueue<Message> msgQ;
+	public int nrVotes; // number of votes accumulated during an election for current server
+	public boolean voted; // whether the current server voted in the current election
+	public ConcurrentLinkedQueue<Message> msgQ; // message queue between servers
 	private final int leaderHeartbeatTimeout = 1400; // ms (aprox half of the minimum election timeout)
-	public int pendingAppEnt;
-	public List<Log> log;
-	public int commitIndex;
-	public int lastApplied;
-	public ConcurrentLinkedQueue<ClientRequest> clientReqQ;
-	public int[] nextIndex;
-	private final int shutdownTime = 100000; // ms (long enough to stay in shutdown)
-	private boolean replicateLogs;
+	public int pendingAppEnt; // the number of append entries the server did not receive
+	public List<Log> log; // server's logs list
+	public int commitIndex; // index of highest log entry known to be committed
+	public int lastApplied; // index of highest log entry applied to state machine
+	public ConcurrentLinkedQueue<ClientRequest> clientReqQ; // message queue reserved for client requests
+	public int[] nextIndex; // for each server, index of the next log entry to send to that server
+	private final int shutdownTime = 100000; // a time long enough to stay in shutdown state (ms)
+	private boolean replicateLogs; // whether it is needed for the current heartbeat to replicate logs or not
 
 	public Server(int id) {
 		this.id = id;
@@ -82,7 +82,7 @@ public class Server implements Runnable {
 	public void run() {
 		System.out.println("[Server " + this.id + "] started");
 		while (true) {
-			if (this.state == State.SHUTDOWN) {
+			if (this.state == State.SHUTDOWN) { // server is shutdown
 				try {
 					Thread.interrupted(); // clear interrupt status
 					Thread.sleep(this.shutdownTime);
@@ -94,13 +94,13 @@ public class Server implements Runnable {
 
 			System.out.println("[Server " + this.id + "] Log: " + this.log);
 			if (this.state != State.LEADER) {
-				int electionTimeout = getElectionTimeout();
+				int electionTimeout = getElectionTimeout(); // get the random election timeout
 				System.out.println("[Server " + this.id + "] Election Timeout: " + electionTimeout);
 				try {
 					Thread.interrupted(); // clear interrupt status
 					Thread.sleep(electionTimeout);
-				} catch (InterruptedException e) {
-					while (!this.msgQ.isEmpty()) {
+				} catch (InterruptedException e) { // a message has been received while waiting the election timeout
+					while (!this.msgQ.isEmpty()) { // check all the received messages
 						Message msg = msgQ.poll();
 
 						if (Main.debug) {
@@ -125,6 +125,7 @@ public class Server implements Runnable {
 				}
 
 				// no message until election timeout expired, time to get some votes
+				// new term started
 				this.term++;
 
 				Message msg = new RequestVote(this.term, this.id, true, this.id, false);
@@ -134,9 +135,9 @@ public class Server implements Runnable {
 
 				// send the vote requests
 				this.supervisor.msgQ.add(msg);
-			} else {
+			} else { // leader's actions
 				ClientRequest clReq = null;
-				if (!this.clientReqQ.isEmpty()) {
+				if (!this.clientReqQ.isEmpty()) { // check for client request
 					clReq = this.clientReqQ.poll();
 
 					System.out.println("[Server " + this.id + "] received " + clReq + " from client");
@@ -145,16 +146,17 @@ public class Server implements Runnable {
 				Message msg;
 				int prevLogIndex = log.size() - 1;
 				int prevLogTerm = log.size() < 1 ? -1 : log.get(log.size() - 1).term;
-				if (clReq == null) {
-					if (!this.replicateLogs) {
+				if (clReq == null) { // no client request
+					if (!this.replicateLogs) { // simple heartbeat
 						msg = new AppendEntry(this.term, this.id, true, this.id, -1, prevLogIndex, prevLogTerm);
 
 						// send the vote requests
 						this.supervisor.msgQ.add(msg);
-					} else {
+					} else { // a server is inconsistent and logs are sent to it
 						for (int i = 0; i < nextIndex.length; i++) {
 							if (i != this.id) {
 								if (this.nextIndex[i] <= this.lastApplied) {
+									// only the inconsistent server receives logs
 									List<Log> entries = new ArrayList<Log>();
 									int specialPrevLogIndex = this.nextIndex[i] - 1;
 									while (nextIndex[i] <= this.lastApplied) {
@@ -176,9 +178,7 @@ public class Server implements Runnable {
 						}
 						this.replicateLogs = false;
 					}
-				} else { // TODO
-//					prevLogIndex = log.size() - 1;
-//					prevLogTerm = log.size() < 1 ? -1 : log.get(log.size() - 1).term;
+				} else { // client request received
 					Log newLog = new Log(this.term, this.commitIndex + 1, clReq.log);
 					this.log.add(newLog);
 					this.commitIndex += 1;
@@ -205,6 +205,7 @@ public class Server implements Runnable {
 					System.out.println("[Server " + this.id + "] Something happened to the leader!");
 				}
 
+				// check the responses to the heartbeats
 				while (!this.msgQ.isEmpty()) {
 					msg = msgQ.poll();
 
@@ -280,6 +281,7 @@ public class Server implements Runnable {
 			return;
 		}
 
+		// candidate to leader transition condition
 		if (this.nrVotes >= (supervisor.activeServers / 2 + 1)) {
 			this.state = State.LEADER;
 			this.supervisor.leaderId = this.id;
@@ -308,32 +310,26 @@ public class Server implements Runnable {
 			int prevLogIndex = log.size() - 1;
 			int prevLogTerm = log.size() < 1 ? -1 : log.get(log.size() - 1).term;
 
-			if (!appEnt.logReplication) {
-				if (recPrevLogIndex == prevLogIndex) {
+			if (!appEnt.logReplication) { // if the leader did not send logs
+				if (recPrevLogIndex == prevLogIndex) { // check logs' indexes
 					respAppEnt = new AppendEntry(this.term, appEnt.leaderId, false, this.id, appEnt.leaderId,
 							appEnt.prevLogIndex, appEnt.prevLogTerm);
-				} else {
+				} else { // inconsistency in current server's logs compared to the leader's ones
 					System.out.println("[Server " + this.id + "] inconsistency in logs");
 					respAppEnt = new AppendEntry(this.term, appEnt.leaderId, false, this.id, appEnt.leaderId,
 							prevLogIndex, prevLogTerm);
 					respAppEnt.logReplication = true;
 					respAppEnt.needLog = true;
 				}
-			} else { // TODO
-
-//				int recPrevLogIndex = appEnt.prevLogIndex;
-//				int recPrevLogTerm = appEnt.prevLogTerm;
-//				int prevLogIndex = log.size() - 1;
-//				int prevLogTerm = log.size() < 1 ? -1 : log.get(log.size() - 1).term;
-
-				if (recPrevLogIndex == prevLogIndex) {
+			} else { // leader sent logs
+				if (recPrevLogIndex == prevLogIndex) { // check logs' indexes
 					this.commitIndex = appEnt.leaderCommit;
 
 					log.addAll(appEnt.entries);
 
 					respAppEnt = new AppendEntry(this.term, appEnt.leaderId, false, this.id, true, appEnt.prevLogIndex,
 							appEnt.prevLogTerm, null, this.commitIndex, false, appEnt.leaderId);
-				} else {
+				} else { // inconsistency in current server's logs compared to the leader's ones
 					System.out.println("[Server " + this.id + "] inconsistency in logs");
 					respAppEnt = new AppendEntry(this.term, appEnt.leaderId, false, this.id, true, prevLogIndex,
 							prevLogTerm, null, this.commitIndex, true, appEnt.leaderId);
@@ -379,10 +375,11 @@ public class Server implements Runnable {
 			}
 
 			if (appEnt.logReplication) {
-				if (appEnt.needLog) {
+				if (appEnt.needLog) { // inconsistent server found
+					// update the nextIndex for it
 					this.nextIndex[appEnt.serverId] = appEnt.prevLogIndex + 1;
-					this.replicateLogs = true;
-				} else {
+					this.replicateLogs = true; // logs are going to be sent in next heartbeat
+				} else { // no inconsistency
 					this.nextIndex[appEnt.serverId] = this.lastApplied + 1;
 				}
 			}

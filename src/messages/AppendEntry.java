@@ -5,15 +5,15 @@ import java.util.List;
 import servers.Log;
 
 public class AppendEntry extends Message {
-	public int leaderId;
-	public boolean fromleader;
-	public boolean logReplication;
-	public boolean needLog;
-	public int prevLogIndex;
-	public int prevLogTerm;
-	public List<Log> entries;
-	public int leaderCommit;
-	public int destServerId;
+	public int leaderId; // current term's leader
+	public boolean fromleader; // whether the source of message is the leader or not
+	public boolean logReplication; // whether log replication is needed or not
+	public boolean needLog; // inconsistency found, need logs to repair
+	public int prevLogIndex; // index of log entry immediately preceding new ones
+	public int prevLogTerm; // term of prevLogIndex entry
+	public List<Log> entries; // entries to be replicated
+	public int leaderCommit; // leader's commit for current entries
+	public int destServerId; // destination of message
 
 	public AppendEntry(int term, int leaderId, boolean fromleader, int serverId, int destServerId, int prevLogIndex,
 			int prevLogTerm) {

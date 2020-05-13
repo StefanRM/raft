@@ -2,8 +2,8 @@ package servers;
 
 public class Log {
 	public int term;
-	public int commitIndex;
-	public int log;
+	public int commitIndex; // leader commit index for log replication
+	public int log; // information stored
 
 	public Log(int term, int commitIndex, int log) {
 		this.term = term;
